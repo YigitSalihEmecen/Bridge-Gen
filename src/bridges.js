@@ -104,11 +104,12 @@ export function context(P) {
     return lerp(P.startElev, P.endElev, t) + P.camber * 4 * t * (1 - t);
   };
   const shape = { V: (s) => 1 - Math.abs(s), U: (s) => 1 - s ** 4, Flat: (s) => 1 - smoothstep(0.84, 1, Math.abs(s)) }[P.gapShape] ?? ((s) => 1 - s * s);
-  const groundY = (x) => {
+  // A host can pass its own terrain as `P.ground(x)`; piers, abutments and arch fill then stand on it.
+  const groundY = P.ground ?? ((x) => {
     const t = tOf(x);
     const base = lerp(P.startElev, P.endElev, clamp(t, 0, 1));
     return t <= 0 || t >= 1 ? base : base - P.gapDepth * shape(2 * t - 1);
-  };
+  });
   const path = (x0, x1, dy = 0, z = 0) => {
     const xs = [x0, ...[-L / 2, L / 2].filter((b) => b > x0 && b < x1), x1];
     const pts = [V(x0, deckY(x0) + dy, z)];

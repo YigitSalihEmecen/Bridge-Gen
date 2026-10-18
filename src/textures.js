@@ -280,7 +280,7 @@ void main() {
 
 const VERT = 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
-export async function bakeTextures(renderer, onProgress) {
+export async function bakeTextures(renderer, onProgress, { maxRes = Infinity } = {}) {
   const scene = new THREE.Scene();
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
@@ -308,7 +308,7 @@ export async function bakeTextures(renderer, onProgress) {
   for (const [i, key] of keys.entries()) {
     onProgress?.(i, keys.length, MATERIALS[key].name);
     await new Promise(requestAnimationFrame);
-    N = MATERIALS[key].res;
+    N = Math.min(MATERIALS[key].res, maxRes);
     ({ rtF, rt8 } = targets[N] ||= {
       rtF: new THREE.WebGLRenderTarget(N, N, { type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false }),
       rt8: new THREE.WebGLRenderTarget(N, N, { depthBuffer: false }),
@@ -335,7 +335,7 @@ export async function bakeTextures(renderer, onProgress) {
     draw(rt8);
     const orm = read();
     bake.dispose();
-    out[key] = { albedo, normal, orm };
+    out[key] = { albedo, normal, orm, res: N };
   }
   renderer.setRenderTarget(null);
   for (const t of Object.values(targets)) { t.rtF.dispose(); t.rt8.dispose(); }
@@ -411,11 +411,11 @@ export function makeMaterials(baked, renderer) {
   const mats = {};
   for (const [key, def] of Object.entries(MATERIALS)) {
     const b = baked[key];
-    const orm = dataTexture(b.orm, false, def.res, aniso);
+    const orm = dataTexture(b.orm, false, b.res, aniso);
     const m = new THREE.MeshStandardMaterial({
       name: def.name,
-      map: dataTexture(b.albedo, true, def.res, aniso),
-      normalMap: dataTexture(b.normal, false, def.res, aniso),
+      map: dataTexture(b.albedo, true, b.res, aniso),
+      normalMap: dataTexture(b.normal, false, b.res, aniso),
       normalScale: new THREE.Vector2(1, -1),
       roughnessMap: orm,
       metalnessMap: orm,
