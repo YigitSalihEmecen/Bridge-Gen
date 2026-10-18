@@ -207,7 +207,7 @@ function concretePier(B, c, x, topY, hw, thick = 1.6) {
   const r = Math.min(clamp(0.45 + (topY - g) * 0.012, 0.5, 3.2), hw * 0.45);
   for (const k of range(nCol)) {
     const z = nCol === 1 ? 0 : lerp(-hw + r + 0.4, hw - r - 0.4, k / (nCol - 1));
-    B.add('concrete', cyl(V(x, bottom, z), V(x, topY - capH + 0.05, z), r, 24, false), { wrap: true });
+    B.add('concrete', cyl(V(x, bottom, z), V(x, topY - capH + 0.05, z), r, 24), { wrap: true });
     B.add('concrete', box(r * 3.2, 1.2, r * 3.2), at(x, g - 0.45, z));
   }
 }
@@ -295,16 +295,26 @@ function stoneArch(B, c, P) {
     const xa = c.joints[i] + pw / 2, xb = c.joints[i + 1] - pw / 2;
     const xm = (xa + xb) / 2, cs = xb - xa;
     const crown = c.deckY(xm) - deckT - fill - ringT;
-    const spring = Math.max(crown - P.archRise * cs, Math.max(c.groundY(xa), c.groundY(xb)) + 0.3);
-    const rise = crown - spring;
-    springs.push(rise < 0.4 ? null : spring);
+    const floor = Math.max(c.groundY(xa), c.groundY(xb)) + 0.3;
+    const arc = (rise) => {
+      const R = (cs * cs / 4 + rise * rise) / (2 * rise), yc = crown - R;
+      const half = Math.asin(clamp(cs / 2 / R, 0, 1));
+      const pts = range(29).map((k) => {
+        const a = Math.PI / 2 + half - (2 * half * k) / 28;
+        return [xm + R * Math.cos(a), yc + R * Math.sin(a), a];
+      });
+      return { R, yc, pts };
+    };
+    // Shrink the rise until the arch ring stays under a cambered deck everywhere.
+    let rise = Math.min(P.archRise * cs, crown - floor), A = null;
+    for (; rise >= 0.4; rise *= 0.85) {
+      A = arc(rise);
+      const rr = A.R + ringT;
+      if (A.pts.every(([, , a]) => A.yc + rr * Math.sin(a) <= c.deckY(xm + rr * Math.cos(a)) - deckT - 0.15)) break;
+    }
+    springs.push(rise < 0.4 ? null : crown - rise);
     if (rise < 0.4) continue;
-    const R = (cs * cs / 4 + rise * rise) / (2 * rise), yc = crown - R;
-    const half = Math.asin(clamp(cs / 2 / R, 0, 1));
-    const arcPts = range(29).map((k) => {
-      const a = Math.PI / 2 + half - (2 * half * k) / 28;
-      return [xm + R * Math.cos(a), yc + R * Math.sin(a), a];
-    });
+    const { R, yc, pts: arcPts } = A;
     const hole = arcPts.map(([x, y]) => V2(x, y));
     for (let k = 0; k <= 16; k++) {
       const x = lerp(xb, xa, k / 16);
@@ -448,9 +458,9 @@ function tiedArch(B, c, P) {
         if (P.hangerPattern === 'Network') {
           for (const dir of [-1, 1]) {
             const xt = clamp(x + dir * sp * 0.14, xa + 1, xb - 1);
-            B.add('cable', cyl(base, V(xt, archY(xt) - rd / 2, z), rh, 6, false), { wrap: true });
+            B.add('cable', cyl(base, V(xt, archY(xt) - rd / 2, z), rh, 6), { wrap: true });
           }
-        } else B.add('cable', cyl(base, V(x, archY(x) - rd / 2, z), rh, 6, false), { wrap: true });
+        } else B.add('cable', cyl(base, V(x, archY(x) - rd / 2, z), rh, 6), { wrap: true });
       }
     }
     if (rise > 8) {
@@ -527,7 +537,7 @@ function suspension(B, c, P) {
     ...range(96).map((k) => lerp(-xT, xT, (k + 1) / 96)),
     ...range(16).map((k) => lerp(xT, xA, (k + 1) / 16)),
   ];
-  for (const z of [-zc, zc]) B.add('cable', sweep(xsC.map((x) => V(x, cableY(x), z)), circle(rc, 14), { smooth: true, caps: false, side: Z }), { wrap: true });
+  for (const z of [-zc, zc]) B.add('cable', sweep(xsC.map((x) => V(x, cableY(x), z)), circle(rc, 14), { smooth: true, side: Z }), { wrap: true });
 
   const rh = clamp(rc * 0.12, 0.025, 0.1);
   const hangers = [];
@@ -536,7 +546,7 @@ function suspension(B, c, P) {
   const side = L / 2 - xT, nSide = Math.round(side / P.hangerSpacing);
   for (let k = 1; k < nSide; k++) hangers.push(-xT - (k * side) / nSide, xT + (k * side) / nSide);
   for (const x of hangers) {
-    for (const z of [-zc, zc]) B.add('cable', cyl(V(x, c.deckY(x) + d.bottom + 0.2, z), V(x, cableY(x) - rc * 0.7, z), rh, 6, false), { wrap: true });
+    for (const z of [-zc, zc]) B.add('cable', cyl(V(x, c.deckY(x) + d.bottom + 0.2, z), V(x, cableY(x) - rc * 0.7, z), rh, 6), { wrap: true });
   }
   for (const s of [-1, 1]) {
     const yE = c.deckY(s * L / 2), g = c.groundY(s * L / 2);
@@ -589,9 +599,9 @@ function cableStayed(B, c, P) {
           : P.stayLayout === 'Harp' ? yD + Hp * (0.2 + 0.72 * (k / n))
             : top - 1.5 - Hp * 0.32 * (1 - k / n);
         for (const s of [-1, 1]) {
-          const a = V(xd, c.deckY(xd) + 0.3, s * zs);
+          const a = V(xd, c.deckY(xd) + d.bottom + 0.1, s * zs);
           const b = V(x + dir * leg * 0.45, ya, legZ(ya, s));
-          B.add('cable', cyl(a, b, rs, 8, false), { wrap: true });
+          B.add('cable', cyl(a, b, rs, 8), { wrap: true });
         }
       }
     }
@@ -616,21 +626,21 @@ function ropeBridge(B, c, P) {
     B.add('timber', box(hw * 2 + 0.12 + rand() * 0.12, 0.045, 0.2 + rand() * 0.04), { matrix: m });
     x += 0.31 * Math.cos(ang);
   }
-  const rope = (pts, r) => B.add('rope', sweep(pts, circle(r, 8), { smooth: true, caps: false, side: Z }), { wrap: true });
+  const rope = (pts, r) => B.add('rope', sweep(pts, circle(r, 8), { smooth: true, side: Z }), { wrap: true });
   for (const s of [-1, 1]) {
     rope(c.path(-L / 2 - 0.9, L / 2 + 0.9, -0.07, s * (hw + 0.02)), 0.03);
     rope(c.path(-L / 2 - 0.9, L / 2 + 0.9, 1.0, s * (hw + 0.1)), 0.028);
     const nt = Math.max(2, Math.round(L / 1.2));
     for (let k = 0; k <= nt; k++) {
       const x = lerp(-L / 2, L / 2, k / nt), y = c.deckY(x);
-      B.add('rope', cyl(V(x, y - 0.07, s * (hw + 0.02)), V(x, y + 1.0, s * (hw + 0.1)), 0.012, 5, false), { wrap: true });
+      B.add('rope', cyl(V(x, y - 0.07, s * (hw + 0.02)), V(x, y + 1.0, s * (hw + 0.1)), 0.012, 5), { wrap: true });
     }
     for (const end of [-1, 1]) {
       const xP = end * (L / 2 + 0.9), g = c.groundY(xP), z = s * (hw + 0.2);
       B.add('timber', cyl(V(xP, g - 1, z), V(xP, g + 1.45, z), 0.13, 10), { wrap: true });
       const stake = V(xP + end * 2.6, g - 0.05, s * (hw + 0.7));
-      B.add('rope', cyl(V(xP, g + 1.0, z), stake, 0.025, 6, false), { wrap: true });
-      B.add('rope', cyl(V(xP, g - 0.05, z), stake, 0.025, 6, false), { wrap: true });
+      B.add('rope', cyl(V(xP, g + 1.0, z), stake, 0.025, 6), { wrap: true });
+      B.add('rope', cyl(V(xP, g - 0.05, z), stake, 0.025, 6), { wrap: true });
       B.add('timber', cyl(stake.clone().setY(g - 0.6), stake.clone().setY(g + 0.35), 0.07, 8), { wrap: true });
     }
   }

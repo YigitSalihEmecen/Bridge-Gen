@@ -196,7 +196,10 @@ export function sweep(path, profile, { caps = true, smooth = false, side = null 
 }
 
 // Extrudes a polygon with holes along +Z. Side walls get arc-length UVs so arch soffits wrap cleanly.
+// ExtrudeGeometry only fixes hole winding for CCW outlines, so normalize: outline CCW, holes CW.
 export function extrude(outline, holes, depth) {
+  if (THREE.ShapeUtils.isClockWise(outline)) outline = outline.slice().reverse();
+  holes = holes.map((h) => (THREE.ShapeUtils.isClockWise(h) ? h : h.slice().reverse()));
   const shape = new THREE.Shape(outline);
   for (const h of holes) shape.holes.push(new THREE.Path(h));
   const key = (x, y) => `${x.toFixed(4)},${y.toFixed(4)}`;
