@@ -50,7 +50,7 @@ export const BASE = {
   spans: 2, archRise: 0.45, parapet: 1.0, girderDepth: 2, trussHeight: 7, trussStyle: 'Pratt', trussMaterial: 'Steel',
   mainRatio: 0.6, towerHeight: 60, towerMaterial: 'Concrete', stiffening: 'Truss', hangerSpacing: 10, hangerPattern: 'Vertical',
   pylons: '2', pylonShape: 'H', stayLayout: 'Semi-fan', staySpacing: 12, railing: 'Barrier', seed: 7,
-  steelColor: '#6f7b80', pom: 1, terrain: true, water: true,
+  steelColor: '#6f7b80', pom: 1, terrain: true, water: true, texRes: '2048',
 };
 
 const STEEL = ['truss', 'girder', 'arch', 'stayed', 'suspension'];
@@ -92,6 +92,8 @@ export const PARAMS = [
   { group: 'Viewport' },
   { key: 'terrain', label: 'Terrain preview', check: true },
   { key: 'water', label: 'Water', check: true },
+  { group: 'Export' },
+  { key: 'texRes', label: 'Texture size', unit: 'px', options: ['2048', '1024', '512'] },
 ];
 
 export function context(P) {

@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { zipSync, strToU8 } from 'fflate';
-import { bakeTextures, makeMaterials, dataTexture, MATERIALS, RES, pomScale } from './textures.js';
+import { bakeTextures, makeMaterials, dataTexture, MATERIALS, pomScale } from './textures.js';
 import { TYPES, BASE, PARAMS, buildBridge, buildTerrain } from './bridges.js';
 
 const P = { ...BASE, ...TYPES.wood.defaults, type: 'wood' };
@@ -190,11 +190,12 @@ function set(p, v) {
   if (p.key === 'pom') pomScale.value = v;
   else if (p.key === 'steelColor') mats.steel.color.set(v);
   else if (p.key === 'terrain' || p.key === 'water') applyVisibility();
+  else if (p.key === 'texRes') return;
   else schedule();
 }
 
 function selectType(type) {
-  const keep = { pom: P.pom, terrain: P.terrain, water: P.water };
+  const keep = { pom: P.pom, terrain: P.terrain, water: P.water, texRes: P.texRes };
   Object.assign(P, BASE, TYPES[type].defaults, keep, { type });
   mats.steel.color.set(P.steelColor);
   syncUI();
@@ -211,7 +212,7 @@ function exportMaterial(mesh) {
   if (!exportNormals[key]) {
     const d = new Uint8Array(baked[key].normal);
     for (let i = 3; i < d.length; i += 4) d[i] = 255;
-    exportNormals[key] = dataTexture(d, false);
+    exportNormals[key] = dataTexture(d, false, MATERIALS[key].res);
   }
   return new THREE.MeshStandardMaterial({
     name: m.name, color: m.color, map: m.map, normalMap: exportNormals[key],
@@ -229,14 +230,22 @@ async function glb() {
     m.name = mesh.name;
     group.add(m);
   }
-  return new Uint8Array(await new GLTFExporter().parseAsync(group, { binary: true, maxTextureSize: RES }));
+  return new Uint8Array(await new GLTFExporter().parseAsync(group, { binary: true, maxTextureSize: +P.texRes }));
 }
 
-async function png(rgba, map) {
+async function png(rgba, map, size) {
   const data = new Uint8ClampedArray(rgba.length);
   for (let i = 0; i < rgba.length; i += 4) map(rgba, data, i);
-  const cv = new OffscreenCanvas(RES, RES);
-  cv.getContext('2d').putImageData(new ImageData(data, RES, RES), 0, 0);
+  let cv = new OffscreenCanvas(size, size);
+  cv.getContext('2d').putImageData(new ImageData(data, size, size), 0, 0);
+  const out = Math.min(size, +P.texRes);
+  if (out < size) {
+    const small = new OffscreenCanvas(out, out);
+    const ctx = small.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cv, 0, 0, out, out);
+    cv = small;
+  }
   return new Uint8Array(await (await cv.convertToBlob({ type: 'image/png' })).arrayBuffer());
 }
 const opaque = (s, d, i) => { d[i] = s[i]; d[i + 1] = s[i + 1]; d[i + 2] = s[i + 2]; d[i + 3] = 255; };
@@ -251,7 +260,7 @@ function download(bytes, name, type) {
 }
 
 function readme(used) {
-  const lines = used.map((k) => `  ${MATERIALS[k].name.padEnd(14)} tile ${MATERIALS[k].ws} m   relief ${(MATERIALS[k].depth * 100).toFixed(2)} cm`);
+  const lines = used.map((k) => `  ${MATERIALS[k].name.padEnd(14)} tile ${MATERIALS[k].ws} m   ${Math.min(MATERIALS[k].res, +P.texRes)} px   relief ${(MATERIALS[k].depth * 100).toFixed(2)} cm`);
   return `Bridge Generator export — ${baseName()}
 
 Units: meters. Up axis: +Y. Bridge runs along +X, centered on X=0/Z=0.
@@ -289,11 +298,11 @@ $('#export-zip').onclick = (e) => busy(e.currentTarget, async () => {
   const used = Object.keys(mats).filter((k) => MATERIALS[k] && bridge.children.some((m) => m.material === mats[k]));
   const files = { [`${baseName()}.glb`]: await glb(), 'README.txt': strToU8(readme(used)) };
   for (const k of used) {
-    const n = MATERIALS[k].name, d = baked[k];
-    files[`textures/${n}_BaseColor.png`] = await png(d.albedo, opaque);
-    files[`textures/${n}_Normal_OpenGL.png`] = await png(d.normal, opaque);
-    files[`textures/${n}_ORM.png`] = await png(d.orm, opaque);
-    files[`textures/${n}_Height.png`] = await png(d.normal, alphaGray);
+    const { name: n, res } = MATERIALS[k], d = baked[k];
+    files[`textures/${n}_BaseColor.png`] = await png(d.albedo, opaque, res);
+    files[`textures/${n}_Normal_OpenGL.png`] = await png(d.normal, opaque, res);
+    files[`textures/${n}_ORM.png`] = await png(d.orm, opaque, res);
+    files[`textures/${n}_Height.png`] = await png(d.normal, alphaGray, res);
   }
   download(zipSync(files, { level: 0 }), `${baseName()}.zip`, 'application/zip');
 });

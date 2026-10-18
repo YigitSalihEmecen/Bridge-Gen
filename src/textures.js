@@ -1,24 +1,27 @@
 import * as THREE from 'three';
 
-// ws: tile size in meters, depth: physical relief in meters (drives both normals and POM).
+// ws: tile size in meters, res: bake resolution, depth: physical relief in meters (drives both normals and POM).
 export const MATERIALS = {
-  stone: { name: 'Stone', ws: 2.0, depth: 0.08 },
-  cobble: { name: 'Cobblestone', ws: 1.5, depth: 0.07 },
-  planks: { name: 'Planks', ws: 2.0, depth: 0.028 },
-  timber: { name: 'Timber', ws: 1.0, depth: 0.016 },
-  steel: { name: 'PaintedSteel', ws: 1.0, depth: 0.004 },
-  concrete: { name: 'Concrete', ws: 2.0, depth: 0.02 },
-  asphalt: { name: 'Asphalt', ws: 2.0, depth: 0.012 },
-  rope: { name: 'Rope', ws: 0.25, depth: 0.02 },
-  cable: { name: 'SteelCable', ws: 0.25, depth: 0.012 },
+  stone: { name: 'Stone', ws: 4.0, res: 2048, depth: 0.08 },
+  cobble: { name: 'Cobblestone', ws: 3.0, res: 2048, depth: 0.07 },
+  planks: { name: 'Planks', ws: 4.0, res: 2048, depth: 0.028 },
+  timber: { name: 'Timber', ws: 1.5, res: 1024, depth: 0.016 },
+  steel: { name: 'PaintedSteel', ws: 2.0, res: 1024, depth: 0.004 },
+  concrete: { name: 'Concrete', ws: 4.0, res: 2048, depth: 0.02 },
+  asphalt: { name: 'Asphalt', ws: 4.0, res: 2048, depth: 0.012 },
+  rope: { name: 'Rope', ws: 0.25, res: 1024, depth: 0.02 },
+  cable: { name: 'SteelCable', ws: 0.25, res: 1024, depth: 0.012 },
 };
 export const TILE = Object.fromEntries(Object.entries(MATERIALS).map(([k, m]) => [k, m.ws]));
-export const RES = 1024;
 
 const NOISE = /* glsl */ `
 uniform float uRes;
 uniform float uSeed;
+uniform float uWS;
 uniform int uMode;
+// Integer cycles per tile closest to a per-meter frequency, so every layer tiles seamlessly.
+float F(float perMeter) { return max(1.0, floor(perMeter * uWS + 0.5)); }
+vec2 F2(float perMeter) { return vec2(F(perMeter)); }
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 vec2 hash22(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973)); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.xx + p3.yz) * p3.zy); }
 float vnoise(vec2 p, vec2 per) {
@@ -50,129 +53,171 @@ vec3 voronoi(vec2 uv, vec2 f, float jit) {
 const SURF = {
   stone: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  const float WS = 2.0, rows = 5.0;
-  float row = floor(uv.y * rows), fy = fract(uv.y * rows);
-  float k = 2.0 + floor(hash12(vec2(row, 3.7) + uSeed) * 2.99);
-  float bx = uv.x * k + hash12(vec2(row, 9.1) + uSeed);
-  float fx = fract(bx);
-  vec2 id = vec2(mod(floor(bx), k), row);
-  float r1 = hash12(id + 1.3 + uSeed), r2 = hash12(id + 5.9 + uSeed), r3 = hash12(id * 1.7 + 2.1);
-  float ex = min(fx, 1.0 - fx) * WS / k, ey = min(fy, 1.0 - fy) * WS / rows;
-  float chip = fbm(uv, vec2(28.0), 4);
-  float e = min(ex, ey) - (chip - 0.5) * 0.035;
-  float edge = smoothstep(0.008, 0.05, e);
-  float surface = fbm(uv + r1, vec2(12.0), 6);
-  float tilt = dot(vec2(fx, fy) - 0.5, (vec2(r2, r3) - 0.5) * 0.25);
-  float face = 0.70 + 0.10 * r1 + 0.24 * (surface - 0.5) + tilt + smoothstep(0.0, 0.12, e) * 0.06;
-  float mortarH = 0.12 + 0.1 * fbm(uv, vec2(96.0), 3);
+  const int NR = 10, NB = 7;
+  float tot = 0.0;
+  for (int i = 0; i < NR; i++) tot += 0.6 + 0.8 * hash12(vec2(float(i), 3.1) + uSeed);
+  float y = uv.y * tot, acc = 0.0, row = 0.0, rh = 1.0, fy = 0.0;
+  for (int i = 0; i < NR; i++) {
+    float hi = 0.6 + 0.8 * hash12(vec2(float(i), 3.1) + uSeed);
+    row = float(i); rh = hi; fy = (y - acc) / hi;
+    if (y < acc + hi) break;
+    acc += hi;
+  }
+  fy = clamp(fy, 0.0, 1.0);
+  float rowM = rh / tot * uWS;
+  float nb = 3.0 + floor(hash12(vec2(row, 7.7) + uSeed) * 4.0);
+  float btot = 0.0;
+  for (int j = 0; j < NB; j++) if (float(j) < nb) btot += 0.5 + hash12(vec2(row * 13.0 + float(j), 11.0) + uSeed);
+  float x = fract(uv.x + hash12(vec2(row, 9.1) + uSeed)) * btot, bi = 0.0, bw = 1.0, fx = 0.0;
+  acc = 0.0;
+  for (int j = 0; j < NB; j++) {
+    if (float(j) >= nb) break;
+    float w = 0.5 + hash12(vec2(row * 13.0 + float(j), 11.0) + uSeed);
+    bi = float(j); bw = w; fx = (x - acc) / w;
+    if (x < acc + w) break;
+    acc += w;
+  }
+  fx = clamp(fx, 0.0, 1.0);
+  float blockM = bw / btot * uWS;
+  vec2 id = vec2(bi, row);
+  float r1 = hash12(id + 1.3 + uSeed), r2 = hash12(id + 5.9 + uSeed), r3 = hash12(id * 1.7 + 2.1 + uSeed), r4 = hash12(id + 17.3 + uSeed);
+  float ex = min(fx, 1.0 - fx) * blockM, ey = min(fy, 1.0 - fy) * rowM;
+  float chip = fbm(uv, F2(7.0), 4);
+  float e = min(ex, ey) - (chip - 0.5) * 0.04;
+  float edge = smoothstep(0.008, 0.05 + 0.03 * r4, e);
+  float surface = fbm(uv + id * 0.137, F2(3.0), 6);
+  float tilt = dot(vec2(fx, fy) - 0.5, (vec2(r2, r3) - 0.5) * 0.3);
+  float face = 0.68 + 0.12 * r1 + 0.26 * (surface - 0.5) + tilt + smoothstep(0.0, 0.15, e) * (0.04 + 0.06 * r4);
+  float mortarH = 0.12 + 0.1 * fbm(uv, F2(24.0), 3);
   h = clamp(mix(mortarH, face, edge), 0.0, 1.0);
-  vec3 sc = mix(vec3(0.69, 0.64, 0.56), vec3(0.57, 0.54, 0.50), r2);
-  sc = mix(sc, vec3(0.75, 0.68, 0.57), smoothstep(0.6, 1.0, r3) * 0.8);
-  float grain = fbm(uv, vec2(64.0), 4);
-  sc *= 0.86 + 0.28 * grain;
-  sc *= mix(1.0, 0.88, smoothstep(0.5, 0.8, fbm(uv, vec2(5.0), 5)));
-  sc = mix(sc, vec3(0.52, 0.55, 0.40), smoothstep(0.66, 0.8, fbm(uv + 3.3, vec2(9.0), 5)) * 0.2);
-  vec3 mc = vec3(0.60, 0.58, 0.54) * (0.85 + 0.2 * fbm(uv, vec2(160.0), 2));
-  col = mix(mc * 0.88, sc, edge) * (0.9 + 0.1 * smoothstep(0.0, 0.03, e));
-  rough = mix(0.97, 0.82 + 0.08 * grain, edge);
+  float pick = r2 * 5.0;
+  vec3 sc = pick < 1.0 ? vec3(0.70, 0.65, 0.57) : pick < 2.0 ? vec3(0.60, 0.57, 0.52) : pick < 3.0 ? vec3(0.74, 0.67, 0.55) : pick < 4.0 ? vec3(0.55, 0.50, 0.44) : vec3(0.66, 0.60, 0.50);
+  float grain = fbm(uv, F2(16.0), 4);
+  sc *= (0.88 + 0.24 * r3) * (0.88 + 0.24 * grain);
+  sc *= 0.92 + 0.14 * fbm(uv + r1 * 3.0, F2(2.0), 4);
+  sc *= mix(1.0, 0.85, smoothstep(0.55, 0.8, fbm(uv, vec2(F(3.0), F(0.5)), 4)));
+  sc *= 0.93 + 0.07 * smoothstep(0.0, 0.4, fy);
+  sc = mix(sc, vec3(0.56, 0.58, 0.42), smoothstep(0.7, 0.78, fbm(uv + 3.3, F2(2.5), 5)) * step(0.5, r4) * 0.45);
+  vec3 mc = vec3(0.63, 0.61, 0.56) * (0.85 + 0.2 * fbm(uv, F2(40.0), 2));
+  mc = mix(mc, vec3(0.38, 0.42, 0.30), smoothstep(0.62, 0.75, fbm(uv + 7.1, F2(1.5), 4)) * 0.5);
+  col = mix(mc * 0.85, sc, edge) * (0.9 + 0.1 * smoothstep(0.0, 0.03, e));
+  rough = mix(0.97, 0.80 + 0.1 * grain, edge);
   metal = 0.0;
 }`,
   cobble: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  vec3 v = voronoi(uv, vec2(10.0), 0.85);
-  float r = v.z;
+  vec3 v = voronoi(uv, F2(6.5), 0.9);
+  float r = v.z, r2 = hash12(vec2(r * 53.0, 9.0)), r3 = hash12(vec2(r * 17.0, 2.0));
   float s = smoothstep(0.02, 0.34, v.y - v.x);
   float dome = sqrt(s);
-  float n = fbm(uv, vec2(40.0), 4), fine = fbm(uv, vec2(160.0), 2);
-  h = clamp(0.06 + 0.03 * fine + dome * (0.72 + 0.18 * r) + 0.07 * (n - 0.5) * s, 0.0, 1.0);
-  vec3 sc = mix(vec3(0.50, 0.49, 0.47), vec3(0.61, 0.56, 0.49), r);
-  sc = mix(sc, vec3(0.40, 0.40, 0.42), smoothstep(0.7, 1.0, hash12(vec2(r * 91.0, 3.0))));
-  sc *= (0.82 + 0.3 * n) * (0.9 + 0.15 * dome);
-  vec3 gc = vec3(0.36, 0.33, 0.29) * (0.8 + 0.3 * fine);
+  float n = fbm(uv, F2(13.0), 4), fine = fbm(uv, F2(50.0), 2);
+  h = clamp(0.06 + 0.03 * fine + dome * (0.62 + 0.28 * r) + 0.08 * (n - 0.5) * s, 0.0, 1.0);
+  float pick = hash12(vec2(r * 91.0, 3.0)) * 5.0;
+  vec3 sc = pick < 1.0 ? vec3(0.52, 0.51, 0.49) : pick < 2.0 ? vec3(0.62, 0.57, 0.50) : pick < 3.0 ? vec3(0.42, 0.42, 0.43) : pick < 4.0 ? vec3(0.58, 0.50, 0.45) : vec3(0.48, 0.46, 0.41);
+  sc *= (0.82 + 0.3 * n) * (0.9 + 0.15 * dome) * (0.86 + 0.28 * r2);
+  sc *= 0.93 + 0.12 * fbm(uv, F2(1.2), 4);
+  vec3 gc = mix(vec3(0.38, 0.34, 0.29), vec3(0.30, 0.31, 0.24), smoothstep(0.55, 0.75, fbm(uv + 2.0, F2(2.0), 4))) * (0.8 + 0.3 * fine);
   col = mix(gc, sc, smoothstep(0.0, 0.25, s));
-  rough = mix(0.98, 0.74 - 0.14 * dome, s);
+  rough = mix(0.98, 0.76 - 0.2 * dome * r3, s);
   metal = 0.0;
 }`,
   planks: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  const float WS = 2.0, np = 10.0, pw = WS / np;
+  float np = F(5.0), pw = uWS / np;
   float pr = floor(uv.y * np), py = fract(uv.y * np);
-  float r = hash12(vec2(pr, 1.3) + uSeed), r2 = hash12(vec2(pr, 8.1) + uSeed);
-  float px = fract(uv.x + r);
-  float e = min(min(py, 1.0 - py) * pw, min(px, 1.0 - px) * WS);
+  float j1 = hash12(vec2(pr, 1.3) + uSeed), span = 0.3 + 0.4 * hash12(vec2(pr, 2.9) + uSeed);
+  float px = fract(uv.x - j1);
+  float dj = min(min(px, 1.0 - px), abs(px - span)) * uWS;
+  vec2 id = vec2(pr, step(span, px));
+  float r = hash12(id + 4.4 + uSeed), r2 = hash12(id + 8.1 + uSeed), r3 = hash12(id + 12.7 + uSeed);
+  float e = min(min(py, 1.0 - py) * pw, dj);
   float edge = smoothstep(0.004, 0.016, e);
-  float warp = fbm(uv + r, vec2(2.0, 24.0), 4);
+  float warp = fbm(uv + r, vec2(F(0.5), F(6.0)), 4);
   float rings = fract(py * (3.0 + r * 3.0) + warp * 2.5 + r * 7.0);
   float late = smoothstep(0.55, 0.95, rings);
-  float fibers = fbm(uv + r2, vec2(4.0, 400.0), 3);
-  float wear = fbm(uv, vec2(5.0), 5);
-  float cup = (1.0 - pow(abs(py * 2.0 - 1.0), 3.0)) * 0.05;
-  float nail = 1.0 - smoothstep(0.004, 0.007, length(vec2(min(px, 1.0 - px) * WS - 0.06, (abs(py - 0.5) - 0.25) * pw)));
-  h = 0.06 + edge * (0.82 + cup - 0.07 * late * wear - 0.05 * fibers + 0.04 * r) - nail * 0.15;
-  vec3 wc = mix(vec3(0.55, 0.40, 0.26), vec3(0.42, 0.29, 0.18), r2) * (0.85 + 0.25 * fibers);
+  float fibers = fbm(uv + r2, vec2(F(1.0), F(100.0)), 3);
+  float wear = fbm(uv + r3, F2(1.5), 5);
+  float cup = (1.0 - pow(abs(py * 2.0 - 1.0), 3.0)) * (0.03 + 0.04 * r2);
+  float nail = 1.0 - smoothstep(0.004, 0.007, length(vec2(dj - 0.06, (abs(py - 0.5) - 0.25) * pw)));
+  h = 0.06 + edge * (0.8 + cup - 0.07 * late * wear - 0.05 * fibers + 0.06 * r) - nail * 0.15;
+  vec3 base = mix(vec3(0.56, 0.41, 0.27), vec3(0.40, 0.28, 0.18), r2);
+  base = mix(base, vec3(0.50, 0.36, 0.25), smoothstep(0.7, 1.0, r));
+  vec3 wc = base * (0.85 + 0.25 * fibers);
   wc = mix(wc, wc * 0.72, late);
-  wc = mix(wc, vec3(0.56, 0.53, 0.48) * (0.85 + 0.2 * fibers), smoothstep(0.45, 0.8, wear) * 0.35);
+  float grey = clamp(r3 * 0.8 + (wear - 0.5) * 0.6, 0.0, 1.0);
+  wc = mix(wc, vec3(0.55, 0.52, 0.47) * (0.85 + 0.2 * fibers), grey * 0.55);
+  wc *= 0.9 + 0.1 * smoothstep(0.0, 0.05, dj);
   col = mix(mix(vec3(0.12, 0.10, 0.08), wc, edge), vec3(0.22, 0.2, 0.19), nail);
-  rough = mix(0.95, 0.78 + 0.1 * late, edge);
+  rough = mix(0.95, 0.76 + 0.12 * late + 0.06 * grey, edge);
   metal = nail * 0.6;
 }`,
   timber: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  float rings = fract(uv.y * 14.0 + fbm(uv, vec2(2.0, 12.0), 5) * 3.0);
+  float rings = fract(uv.y * F(9.0) + fbm(uv, vec2(F(1.5), F(8.0)), 5) * 3.0);
   float late = smoothstep(0.6, 0.95, rings);
-  float fibers = fbm(uv, vec2(3.0, 240.0), 3);
-  float crack = (1.0 - smoothstep(0.0, 0.012, abs(fbm(uv + 0.37, vec2(3.0, 18.0), 4) - 0.5)))
-              * smoothstep(0.55, 0.7, fbm(uv, vec2(4.0, 2.0), 3));
-  float big = fbm(uv, vec2(3.0), 4);
-  h = 0.82 - 0.05 * late - 0.04 * fibers + 0.06 * (big - 0.5) - crack * 0.6;
+  float fibers = fbm(uv, vec2(F(2.0), F(160.0)), 3);
+  float crack = (1.0 - smoothstep(0.0, 0.012, abs(fbm(uv + 0.37, vec2(F(2.0), F(12.0)), 4) - 0.5)))
+              * smoothstep(0.55, 0.7, fbm(uv, vec2(F(3.0), F(1.5)), 3));
+  vec3 k = voronoi(uv, vec2(F(1.5), F(5.0)), 0.8);
+  float knot = step(0.78, k.z) * (1.0 - smoothstep(0.08, 0.2, k.x));
+  float big = fbm(uv, F2(1.5), 4);
+  h = 0.82 - 0.05 * late - 0.04 * fibers + 0.05 * (big - 0.5) - crack * 0.6 + knot * 0.05;
   vec3 c = mix(vec3(0.47, 0.34, 0.22), vec3(0.36, 0.25, 0.16), late) * (0.85 + 0.25 * fibers) * (0.9 + 0.2 * big);
-  c = mix(c, vec3(0.5, 0.47, 0.42), smoothstep(0.55, 0.85, fbm(uv, vec2(6.0), 4)) * 0.2);
+  c = mix(c, vec3(0.5, 0.47, 0.42), smoothstep(0.55, 0.85, fbm(uv + 1.7, F2(2.0), 4)) * 0.25);
+  c = mix(c, vec3(0.22, 0.14, 0.08), knot * 0.85);
   col = mix(c, vec3(0.1, 0.08, 0.06), crack);
-  rough = 0.82 + 0.1 * late;
+  rough = 0.82 + 0.1 * late - knot * 0.1;
   metal = 0.0;
 }`,
   steel: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  float peel = fbm(uv, vec2(48.0), 4), big = fbm(uv, vec2(3.0), 5);
-  float chipN = fbm(uv + 0.5, vec2(8.0), 6);
-  float chips = smoothstep(0.67, 0.69, chipN);
-  float rim = smoothstep(0.65, 0.67, chipN) - chips;
-  float streak = fbm(uv, vec2(40.0, 3.0), 4), pit = fbm(uv, vec2(128.0), 3);
+  float peel = fbm(uv, F2(24.0), 4), big = fbm(uv, F2(1.5), 5), mot = fbm(uv + 2.2, F2(6.0), 4);
+  float chipN = fbm(uv + 0.5, F2(4.0), 6);
+  float chips = smoothstep(0.68, 0.70, chipN);
+  float rim = smoothstep(0.66, 0.68, chipN) - chips;
+  float streak = fbm(uv, vec2(F(20.0), F(1.5)), 4), pit = fbm(uv, F2(64.0), 3);
   h = 0.9 + 0.03 * peel + 0.03 * rim - chips * (0.35 + 0.2 * pit);
-  vec3 paint = vec3(0.88) * (0.94 + 0.08 * big) * mix(1.0, 0.86, smoothstep(0.5, 0.8, streak));
+  vec3 paint = vec3(0.88) * (0.95 + 0.06 * big) * (0.96 + 0.06 * mot) * mix(1.0, 0.87, smoothstep(0.5, 0.8, streak));
   col = mix(paint, mix(vec3(0.30, 0.22, 0.17), vec3(0.42, 0.28, 0.18), pit), chips);
-  rough = mix(0.42 + 0.12 * big + 0.1 * streak, 0.85, chips);
+  rough = mix(0.42 + 0.1 * big + 0.08 * mot + 0.1 * streak, 0.85, chips);
   metal = 0.0;
 }`,
   concrete: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  float n = fbm(uv, vec2(5.0), 6), m = fbm(uv, vec2(32.0), 4);
-  vec3 v = voronoi(uv, vec2(120.0), 1.0);
-  float pore = (1.0 - smoothstep(0.05, 0.22, v.x)) * step(0.82, v.z);
-  float fy = fract(uv.y * 4.0);
-  float seam = 1.0 - smoothstep(0.0015, 0.005, min(fy, 1.0 - fy) * 0.5);
-  vec2 tp = (fract(uv * vec2(2.0, 4.0) + vec2(0.0, 0.5)) - 0.5) * vec2(1.0, 0.5);
+  vec2 pn = vec2(F(0.75), F(1.6));
+  vec2 pc = uv * pn, pid = floor(pc), pf = fract(pc), psz = uWS / pn;
+  float pr = hash12(pid + 3.3 + uSeed), pr2 = hash12(pid + 8.8 + uSeed);
+  float n = fbm(uv, F2(1.25), 6), m = fbm(uv, F2(8.0), 4);
+  vec3 v = voronoi(uv, F2(30.0), 1.0);
+  float pore = (1.0 - smoothstep(0.05, 0.22, v.x)) * step(0.8, v.z);
+  vec2 pm = min(pf, 1.0 - pf) * psz;
+  float seam = 1.0 - smoothstep(0.0015, 0.005, min(pm.x, pm.y));
+  vec2 tp = (fract(pf * vec2(2.0, 1.0)) - 0.5) * psz / vec2(2.0, 1.0);
   float tie = 1.0 - smoothstep(0.011, 0.015, length(tp));
-  h = 0.72 + 0.1 * (m - 0.5) + 0.05 * (n - 0.5) - pore * 0.3 + seam * 0.06 - tie * 0.5;
-  vec3 base = vec3(0.70, 0.69, 0.66) * (0.86 + 0.22 * n) * (0.95 + 0.08 * m);
-  base *= mix(1.0, 0.82, smoothstep(0.55, 0.85, fbm(uv, vec2(28.0, 2.0), 4)));
+  h = 0.72 + 0.1 * (m - 0.5) + 0.05 * (n - 0.5) + (pr - 0.5) * 0.04 - pore * 0.3 + seam * 0.06 - tie * 0.5;
+  vec3 base = vec3(0.70, 0.69, 0.66) * (0.94 + 0.12 * (pr - 0.5)) * (0.9 + 0.16 * n) * (0.95 + 0.08 * m);
+  base *= mix(1.0, 0.84, smoothstep(0.55, 0.85, fbm(uv, vec2(F(7.0), F(0.5)), 4)));
+  base *= mix(vec3(1.0), vec3(1.02, 1.0, 0.95), pr2);
   col = base * (1.0 - 0.5 * pore) * (1.0 - 0.45 * tie);
   rough = 0.9 - 0.05 * m;
   metal = 0.0;
 }`,
   asphalt: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
-  vec3 v = voronoi(uv, vec2(150.0), 1.0);
+  vec3 v = voronoi(uv, F2(70.0), 1.0);
   float agg = smoothstep(0.02, 0.3, v.y - v.x) * step(0.3, v.z);
-  float fine = fbm(uv, vec2(256.0), 2), n = fbm(uv, vec2(6.0), 5);
-  vec3 cr = voronoi(uv, vec2(3.0), 1.0);
-  float crack = (1.0 - smoothstep(0.0, 0.01, cr.y - cr.x)) * smoothstep(0.6, 0.7, fbm(uv + 0.3, vec2(4.0), 4));
-  h = 0.4 + 0.4 * agg * (0.5 + 0.5 * v.z) + 0.15 * fine - crack * 0.35;
+  float fine = fbm(uv, F2(128.0), 2), n = fbm(uv, F2(1.5), 5);
+  vec3 cr = voronoi(uv, F2(1.2), 1.0);
+  float crack = (1.0 - smoothstep(0.0, 0.012, cr.y - cr.x)) * smoothstep(0.6, 0.7, fbm(uv + 0.3, F2(1.0), 4));
+  float binder = smoothstep(0.55, 0.75, fbm(uv + 9.0, F2(3.0), 5));
+  h = 0.4 + 0.4 * agg * (0.5 + 0.5 * v.z) * (1.0 - 0.4 * binder) + 0.15 * fine - crack * 0.35;
   vec3 c = mix(vec3(0.15, 0.15, 0.155), vec3(0.30, 0.29, 0.28), agg * v.z) * (0.85 + 0.3 * n);
+  c *= (0.94 + 0.1 * fbm(uv + 5.0, F2(4.0), 3)) * (1.0 - 0.18 * binder);
   col = mix(c, vec3(0.07), crack);
-  rough = 0.88 - 0.1 * agg;
+  rough = 0.88 - 0.1 * agg - 0.12 * binder;
   metal = 0.0;
 }`,
+
   rope: /* glsl */ `
 void surf(vec2 uv, out float h, out vec3 col, out float rough, out float metal) {
   float prof = sqrt(max(0.0, sin(3.14159 * fract(uv.x * 6.0 + uv.y * 3.0))));
@@ -236,18 +281,17 @@ void main() {
 const VERT = 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
 export async function bakeTextures(renderer, onProgress) {
-  const N = RES;
   const scene = new THREE.Scene();
   const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
   quad.frustumCulled = false;
   scene.add(quad);
-  const rtF = new THREE.WebGLRenderTarget(N, N, { type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false });
-  const rt8 = new THREE.WebGLRenderTarget(N, N, { depthBuffer: false });
+  const targets = {};
+  let N, rtF, rt8;
   const post = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: POST,
-    uniforms: { tH: { value: rtF.texture }, uRes: { value: N }, uDepth: { value: 0 }, uWS: { value: 1 }, uMode: { value: 0 } },
+    uniforms: { tH: { value: null }, uRes: { value: 0 }, uDepth: { value: 0 }, uWS: { value: 1 }, uMode: { value: 0 } },
   });
   const read = () => {
     const buf = new Uint8Array(N * N * 4);
@@ -264,10 +308,17 @@ export async function bakeTextures(renderer, onProgress) {
   for (const [i, key] of keys.entries()) {
     onProgress?.(i, keys.length, MATERIALS[key].name);
     await new Promise(requestAnimationFrame);
+    N = MATERIALS[key].res;
+    ({ rtF, rt8 } = targets[N] ||= {
+      rtF: new THREE.WebGLRenderTarget(N, N, { type: THREE.FloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false }),
+      rt8: new THREE.WebGLRenderTarget(N, N, { depthBuffer: false }),
+    });
+    post.uniforms.tH.value = rtF.texture;
+    post.uniforms.uRes.value = N;
     const bake = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: BAKE.replace('void main()', SURF[key] + '\nvoid main()'),
-      uniforms: { uRes: { value: N }, uSeed: { value: i + 1 }, uMode: { value: 0 } },
+      uniforms: { uRes: { value: N }, uSeed: { value: i + 1 }, uWS: { value: MATERIALS[key].ws }, uMode: { value: 0 } },
     });
     quad.material = bake;
     draw(rtF);
@@ -287,15 +338,14 @@ export async function bakeTextures(renderer, onProgress) {
     out[key] = { albedo, normal, orm };
   }
   renderer.setRenderTarget(null);
-  rtF.dispose();
-  rt8.dispose();
+  for (const t of Object.values(targets)) { t.rtF.dispose(); t.rt8.dispose(); }
   post.dispose();
   onProgress?.(keys.length, keys.length, '');
   return out;
 }
 
-export function dataTexture(data, srgb, aniso = 8) {
-  const t = new THREE.DataTexture(data, RES, RES, THREE.RGBAFormat);
+export function dataTexture(data, srgb, size, aniso = 8) {
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.minFilter = THREE.LinearMipmapLinearFilter;
   t.magFilter = THREE.LinearFilter;
@@ -361,11 +411,11 @@ export function makeMaterials(baked, renderer) {
   const mats = {};
   for (const [key, def] of Object.entries(MATERIALS)) {
     const b = baked[key];
-    const orm = dataTexture(b.orm, false, aniso);
+    const orm = dataTexture(b.orm, false, def.res, aniso);
     const m = new THREE.MeshStandardMaterial({
       name: def.name,
-      map: dataTexture(b.albedo, true, aniso),
-      normalMap: dataTexture(b.normal, false, aniso),
+      map: dataTexture(b.albedo, true, def.res, aniso),
+      normalMap: dataTexture(b.normal, false, def.res, aniso),
       normalScale: new THREE.Vector2(1, -1),
       roughnessMap: orm,
       metalnessMap: orm,
