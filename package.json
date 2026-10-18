@@ -1,0 +1,12 @@
+{
+  "name": "bridge-gen",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tools/check-meshes.mjs",
+    "serve": "python3 -m http.server 8765"
+  },
+  "devDependencies": {
+    "three": "0.170.0"
+  }
+}
