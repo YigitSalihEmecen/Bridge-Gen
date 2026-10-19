@@ -22,6 +22,10 @@ export const TYPES = {
     label: 'Stone arch', note: 'Masonry arches with cutwaters',
     defaults: { length: 54, lanes: 1, laneWidth: 4, sidewalk: 0.8, camber: 1.4, gapDepth: 9, gapShape: 'U', spans: 3, archRise: 0.5, parapet: 1.0 },
   },
+  causeway: {
+    label: 'Stone causeway', note: 'Solid masonry, filled to the ground',
+    defaults: { length: 60, lanes: 2, laneWidth: 3.5, sidewalk: 0, camber: 0.3, gapDepth: 7, gapShape: 'U', parapet: 1.0, buttress: 9 },
+  },
   truss: {
     label: 'Truss', note: 'Through truss, steel or timber',
     defaults: { length: 96, lanes: 2, laneWidth: 3.5, sidewalk: 0, camber: 0.4, gapDepth: 14, gapShape: 'U', spans: 2, trussHeight: 7, trussStyle: 'Pratt', trussMaterial: 'Steel', steelColor: '#5d6b70', railing: 'Railing' },
@@ -49,7 +53,7 @@ export const BASE = {
   startElev: 0, endElev: 0, camber: 0, gapDepth: 3, gapShape: 'U',
   spans: 2, archRise: 0.45, parapet: 1.0, girderDepth: 2, trussHeight: 7, trussStyle: 'Pratt', trussMaterial: 'Steel',
   mainRatio: 0.6, towerHeight: 60, towerMaterial: 'Concrete', stiffening: 'Truss', hangerSpacing: 10, hangerPattern: 'Vertical',
-  pylons: '2', pylonShape: 'H', stayLayout: 'Semi-fan', staySpacing: 12, railing: 'Barrier', seed: 7,
+  pylons: '2', pylonShape: 'H', stayLayout: 'Semi-fan', staySpacing: 12, railing: 'Barrier', seed: 7, buttress: 9,
   steelColor: '#6f7b80', pom: 1, terrain: true, water: true, texRes: '2048',
 };
 
@@ -69,7 +73,8 @@ export const PARAMS = [
   { group: 'Structure' },
   { key: 'spans', label: 'Spans', min: 1, max: 60, step: 1, types: ['wood', 'stone', 'truss', 'girder', 'arch'] },
   { key: 'archRise', label: 'Arch rise', unit: '×', min: 0.1, max: 0.5, step: 0.01, types: ['stone', 'arch'] },
-  { key: 'parapet', label: 'Parapet height', unit: 'm', min: 0.4, max: 1.6, step: 0.05, types: ['stone'] },
+  { key: 'parapet', label: 'Parapet height', unit: 'm', min: 0.4, max: 1.6, step: 0.05, types: ['stone', 'causeway'] },
+  { key: 'buttress', label: 'Buttress spacing', unit: 'm', min: 4, max: 30, step: 0.5, types: ['causeway'] },
   { key: 'girderDepth', label: 'Girder depth', unit: 'm', min: 0.5, max: 8, step: 0.1, types: ['girder'] },
   { key: 'trussHeight', label: 'Truss height', unit: 'm', min: 1.5, max: 30, step: 0.1, types: ['truss'] },
   { key: 'trussStyle', label: 'Pattern', options: ['Warren', 'Pratt', 'Howe'], types: ['truss'] },
@@ -85,7 +90,7 @@ export const PARAMS = [
   { key: 'hangerSpacing', label: 'Hanger spacing', unit: 'm', min: 2, max: 40, step: 0.5, types: ['suspension', 'arch'] },
   { key: 'hangerPattern', label: 'Hangers', options: ['Vertical', 'Network'], types: ['arch'] },
   { key: 'railing', label: 'Edge', options: ['Barrier', 'Railing'], types: STEEL },
-  { key: 'seed', label: 'Variation seed', min: 1, max: 999, step: 1, types: ['rope', 'wood', 'stone'] },
+  { key: 'seed', label: 'Variation seed', min: 1, max: 999, step: 1, types: ['rope', 'wood', 'stone', 'causeway'] },
   { group: 'Materials' },
   { key: 'steelColor', label: 'Steel paint', color: true, types: STEEL },
   { key: 'pom', label: 'Parallax depth', unit: '×', min: 0, max: 3, step: 0.05 },
@@ -285,18 +290,18 @@ function bent(B, c, x, topY, hw) {
   }
 }
 
-function stoneArch(B, c, P) {
+function stoneArch(B, c, P, solid = false) {
   const L = c.L, rand = rng(P.seed);
   const pt = 0.45, deckT = 0.2, fill = 0.3;
   const hw = c.roadW / 2 + P.sidewalk + pt;
   const sp = L / c.spans;
   const pw = clamp(sp * 0.16, 0.8, 8);
-  const abut = clamp(sp * 0.3, 2.5, 12);
+  const abut = solid ? 3 : clamp(sp * 0.3, 2.5, 12);
   const x0 = -L / 2 - abut, x1 = L / 2 + abut;
   const ringT = clamp(sp * 0.07, 0.35, 1.6);
 
   const holes = [], springs = [];
-  for (const i of range(c.spans)) {
+  for (const i of range(solid ? 0 : c.spans)) {
     const xa = c.joints[i] + pw / 2, xb = c.joints[i + 1] - pw / 2;
     const xm = (xa + xb) / 2, cs = xb - xa;
     const crown = c.deckY(xm) - deckT - fill - ringT;
@@ -342,7 +347,17 @@ function stoneArch(B, c, P) {
   ];
   B.add('stone', extrude(outline, holes, hw * 2), at(0, 0, -hw));
 
-  for (const [i, x] of c.piers.entries()) {
+  if (solid) {
+    // Buttresses on both faces, tapering out at the foot, where the wall stands tall enough to need them.
+    const nb = Math.max(1, Math.round(L / P.buttress));
+    for (const k of range(nb + 1)) {
+      const x = -L / 2 + (k * L) / nb, top = c.deckY(x) - deckT - 0.6, g = c.groundY(x) - 1;
+      if (top - g < 2.5) continue;
+      for (const s of [-1, 1]) B.add('stone', buttress(1.4, top - g, 0.3, 0.3 + (top - g) * 0.12, s), at(x, g, s * (hw - 0.05)));
+    }
+  }
+
+  for (const [i, x] of (solid ? [] : c.piers).entries()) {
     const a = springs[i], b = springs[i + 1];
     const top = Math.min(a ?? Infinity, b ?? Infinity);
     const g = c.groundY(x);
@@ -374,6 +389,17 @@ function stoneArch(B, c, P) {
       B.add('stone', box(0.95, 0.14, 0.95), at(x, y + h + 0.07, s * (hw - pt / 2)));
     }
   }
+}
+
+// A box `w` wide and `h` tall from y = 0, standing out from a wall face on side `s` (±z): `top` deep at its head, `foot` at its base.
+function buttress(w, h, top, foot, s) {
+  const g = box(w, h, 1), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) + h / 2;
+    p.setXYZ(i, p.getX(i), y, (p.getZ(i) + 0.5) * (y > 0 ? top : foot));
+  }
+  g.computeVertexNormals();
+  return s < 0 ? g.rotateY(Math.PI) : g;
 }
 
 // ConeGeometry ships with polar UVs; re-project in meters.
@@ -651,7 +677,7 @@ function ropeBridge(B, c, P) {
   }
 }
 
-const BUILDERS = { wood: woodBeam, rope: ropeBridge, stone: stoneArch, truss: trussBridge, girder: girderBridge, arch: tiedArch, stayed: cableStayed, suspension };
+const BUILDERS = { wood: woodBeam, rope: ropeBridge, stone: stoneArch, causeway: (B, c, P) => stoneArch(B, c, P, true), truss: trussBridge, girder: girderBridge, arch: tiedArch, stayed: cableStayed, suspension };
 
 export function buildBridge(P) {
   const c = context(P);
