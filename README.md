@@ -32,6 +32,8 @@ for (const [key, geo] of Object.entries(parts)) scene.add(new THREE.Mesh(geo, ma
   `-length/2` to `length/2`, road surface at `deckY(x)`, Y up. Pure geometry, no renderer.
 - `P.ground(x)` (optional) replaces the preview's synthetic gap: the host's terrain height under the centreline,
   in the bridge's frame. Piers, abutments, towers and stone arch fill stand on it.
+- `P.segment` (optional) caps the spacing of the deck's sweep rings, metres. A flat deck is otherwise swept end
+  to end in one piece; set it when the host bends the bridge onto a curved road afterwards.
 - `bakeTextures(renderer, onProgress, { maxRes })` bakes every material's maps on the GPU, capped at `maxRes` px;
   `makeMaterials(baked, renderer)` turns them into parallax-mapped `MeshStandardMaterial`s keyed like `parts`.
 

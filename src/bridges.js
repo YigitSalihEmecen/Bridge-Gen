@@ -115,7 +115,9 @@ export function context(P) {
     const pts = [V(x0, deckY(x0) + dy, z)];
     for (let i = 1; i < xs.length; i++) {
       const a = xs[i - 1], b = xs[i];
-      const n = P.camber === 0 ? 1 : clamp(Math.ceil(Math.abs(b - a) / Math.max(0.5, L / 120)), 1, 240);
+      // `P.segment` caps ring spacing for hosts that bend the bridge after building it.
+      const step = Math.min(P.camber === 0 ? Infinity : Math.max(0.5, L / 120), P.segment ?? Infinity);
+      const n = clamp(Math.ceil(Math.abs(b - a) / step), 1, 240);
       for (let k = 1; k <= n; k++) {
         const x = lerp(a, b, k / n);
         pts.push(V(x, deckY(x) + dy, z));

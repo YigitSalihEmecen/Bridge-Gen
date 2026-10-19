@@ -7,7 +7,7 @@ const COMBOS = [
   { length: 2000, lanes: 8, laneWidth: 4.5, sidewalk: 5, spans: 60, gapDepth: 300, gapShape: 'V' },
   { length: 500, camber: -80, gapDepth: 2, startElev: -50, endElev: 150 },
   { length: 120, camber: 60, gapShape: 'Flat', spans: 1, archRise: 0.5 },
-  { length: 140, spans: 4, ground: (x) => -30 + 6 * Math.sin(x * 0.07) + Math.abs(x) * 0.3 },
+  { length: 140, spans: 4, ground: (x) => -30 + 6 * Math.sin(x * 0.07) + Math.abs(x) * 0.3, segment: 4 },
   { length: 800, spans: 7, trussMaterial: 'Timber', trussStyle: 'Warren', pylons: '1', pylonShape: 'A', stayLayout: 'Harp', stiffening: 'Box girder', hangerPattern: 'Vertical', railing: 'Railing', towerHeight: 8, mainRatio: 0.9, hangerSpacing: 2, staySpacing: 3 },
 ];
 
